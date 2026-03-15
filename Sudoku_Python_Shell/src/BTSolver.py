@@ -139,7 +139,20 @@ class BTSolver:
         Return: The unassigned variable with the smallest domain
     """
     def getMRV ( self ):
-        return None
+        out = None
+        best = float('inf')
+
+        for v in self.network.getVariables():
+            if v.isAssigned():
+                continue
+
+            curr = v.getDomain().size()
+            if curr < best:
+                best = curr
+                out = v
+
+        return out
+
 
     """
         Part 2 TODO: Implement the Minimum Remaining Value Heuristic
@@ -180,7 +193,19 @@ class BTSolver:
                 The LCV is first and the MCV is last
     """
     def getValuesLCVOrder ( self, v ):
-        return None
+        neighbors = self.network.getNeighborsOfVariable(v)
+        effects = []
+
+        for val in v.getDomain().values:
+            impact = 0
+            for n in neighbors:
+                if not n.isAssigned() and n.getDomain().contains(val):
+                    impact += 1
+            effects.append((val, impact))
+
+        effects.sort(key=lambda x: x[1])
+
+        return [val for (val, _) in effects]
 
     """
          Optional TODO: Implement your own advanced Value Heuristic
