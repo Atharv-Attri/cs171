@@ -246,152 +246,122 @@ pair<unordered_map<Variable *, int>, bool> BTSolver::norvigCheck(void)
  * your program into a tournament.
  */
 
-bool BTSolver::getTournCC(void)
-{
-	// using norvig + naked pairs as per https://doi.org/10.1051/itmconf/20257004025
-    bool changed = true;
+ bool BTSolver::getTournCC(void){
 
-    while (changed)
-    {
-        changed = false;
-
-        for (Variable *var : network.getVariables())
-        {
-            if (!var->isAssigned())
-                continue;
-
-            int val = var->getAssignment();
-
-            for (Variable *n : network.getNeighborsOfVariable(var))
-            {
-                if (n->isAssigned())
-                    continue;
-
-                if (n->getDomain().contains(val))
-                {
-                    trail->push(n);
-                    n->removeValueFromDomain(val);
-                    changed = true;
-
-                    if (n->getDomain().size() == 0)
-                        return false;
-
-                    if (n->getDomain().size() == 1)
-                    {
-                        trail->push(n);
-                        int forcedVal = n->getDomain().getValues()[0];
-                        n->assignValue(forcedVal);
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        for (Constraint c : network.getConstraints())
-        {
-            int N = c.vars.size();
-
-            for (int val = 1; val <= N; ++val)
-            {
-                vector<Variable *> possibleSpots;
-
-                for (Variable *v : c.vars)
-                {
-                    if (v->isAssigned())
-                    {
-                        if (v->getAssignment() == val)
-                        {
-                            possibleSpots.clear();
-                            possibleSpots.push_back(v);
-                            break;
-                        }
-                    }
-                    else if (v->getDomain().contains(val))
-                    {
-                        possibleSpots.push_back(v);
-                    }
-                }
-
-                if (possibleSpots.empty())
-                    return false;
-
-                if (possibleSpots.size() == 1 && !possibleSpots[0]->isAssigned())
-                {
-                    trail->push(possibleSpots[0]);
-                    possibleSpots[0]->assignValue(val);
-                    changed = true;
-                }
-            }
-        }
-
-        for (Constraint c : network.getConstraints())
-        {
-            vector<Variable *> candidates;
-            for (Variable *v : c.vars)
-                if (!v->isAssigned() && v->getDomain().size() == 2)
-                    candidates.push_back(v);
-
-            for (int i = 0; i < (int)candidates.size(); ++i)
-            {
-                for (int j = i + 1; j < (int)candidates.size(); ++j)
-                {
-                    vector<int> di = candidates[i]->getDomain().getValues();
-                    vector<int> dj = candidates[j]->getDomain().getValues();
-
-                    sort(di.begin(), di.end());
-                    sort(dj.begin(), dj.end());
-
-                    if (di != dj)
-                        continue;
-
-                    int v1 = di[0], v2 = di[1];
-
-                    for (Variable *other : c.vars)
-                    {
-                        if (other == candidates[i] || other == candidates[j])
-                            continue;
-                        if (other->isAssigned())
-                            continue;
-
-                        bool modified = false;
-
-                        if (other->getDomain().contains(v1))
-                        {
-                            trail->push(other);
-                            other->removeValueFromDomain(v1);
-                            modified = true;
-                            changed = true;
-                        }
-
-                        if (other->getDomain().contains(v2))
-                        {
-                            if (!modified) trail->push(other);
-                            other->removeValueFromDomain(v2);
-                            changed = true;
-                        }
-
-                        if (other->getDomain().size() == 0)
-                            return false;
-
-                        if (other->getDomain().size() == 1)
-                        {
-                            trail->push(other);
-                            int forcedVal = other->getDomain().getValues()[0];
-                            other->assignValue(forcedVal);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!network.isConsistent())
-            return false;
+	// norvig + naked pairs as per https://doi.org/10.1051/itmconf/20257004025
+	
+    deque<Variable*> worklist;
+    // Initial seeds: any variable modified since the last check
+    for (Variable* v : network.getVariables()) {
+        if (v->isAssigned()) worklist.push_back(v);
     }
 
+    // Static cache for neighbors and constraints to avoid repeated lookups
+    static unordered_map<Variable*, vector<Variable*>> neighborCache;
+    static unordered_map<Variable*, vector<Constraint*>> constraintCache;
+    if (neighborCache.empty()) {
+        for (Variable* v : network.getVariables()) {
+            neighborCache[v] = network.getNeighborsOfVariable(v);
+            constraintCache[v] = network.getConstraintsContainingVariable(v);
+        }
+    }
+
+    while (!worklist.empty()) {
+        Variable* curr = worklist.front();
+        worklist.pop_front();
+
+        // --- PHASE 1: Forward Checking (The "Heavy Lifter") ---
+        int val = curr->getAssignment();
+        for (Variable* n : neighborCache[curr]) {
+            if (n->isAssigned()) {
+                if (n->getAssignment() == val) return false;
+                continue;
+            }
+
+            if (n->getDomain().contains(val)) {
+                trail->push(n);
+                n->removeValueFromDomain(val);
+                if (n->getDomain().size() == 0) return false;
+
+                if (n->getDomain().size() == 1) {
+                    trail->push(n);
+                    n->assignValue(n->getDomain().getValues()[0]);
+                    worklist.push_back(n);
+                }
+            }
+        }
+
+        // --- PHASE 2 & 3: Hidden Singles & Naked Pairs ---
+        // We only check constraints that the CURRENT variable belongs to
+        for (Constraint* c : constraintCache[curr]) {
+            
+            // 2a. Hidden Singles
+            int N = c->vars.size();
+            for (int v_idx = 1; v_idx <= N; ++v_idx) {
+                Variable* onlySpot = nullptr;
+                bool alreadySet = false;
+                for (Variable* v : c->vars) {
+                    if (v->isAssigned() && v->getAssignment() == v_idx) {
+                        alreadySet = true; break;
+                    }
+                    if (!v->isAssigned() && v->getDomain().contains(v_idx)) {
+                        if (onlySpot != nullptr) { onlySpot = nullptr; break; }
+                        onlySpot = v;
+                    }
+                }
+                if (!alreadySet && onlySpot != nullptr) {
+                    trail->push(onlySpot);
+                    onlySpot->assignValue(v_idx);
+                    worklist.push_back(onlySpot);
+                }
+            }
+
+            // 3a. Naked Pairs (Limited to current constraint)
+            // We search for two variables with the same domain of size 2
+            for (int i = 0; i < c->vars.size(); ++i) {
+                Variable* v1 = c->vars[i];
+                if (v1->isAssigned() || v1->getDomain().size() != 2) continue;
+                
+                vector<int> d1 = v1->getDomain().getValues();
+
+                for (int j = i + 1; j < c->vars.size(); ++j) {
+                    Variable* v2 = c->vars[j];
+                    if (v2->isAssigned() || v2->getDomain().size() != 2) continue;
+                    
+                    vector<int> d2 = v2->getDomain().getValues();
+                    if (d1[0] == d2[0] && d1[1] == d2[1]) {
+                        // Found a Naked Pair! Remove these two values from all other vars in constraint
+                        for (Variable* other : c->vars) {
+                            if (other == v1 || other == v2 || other->isAssigned()) continue;
+                            
+                            bool modified = false;
+                            if (other->getDomain().contains(d1[0])) {
+                                trail->push(other);
+                                other->removeValueFromDomain(d1[0]);
+                                modified = true;
+                            }
+                            if (other->getDomain().contains(d1[1])) {
+                                if (!modified) trail->push(other);
+                                other->removeValueFromDomain(d1[1]);
+                                modified = true;
+                            }
+
+                            if (modified) {
+                                if (other->getDomain().size() == 0) return false;
+                                if (other->getDomain().size() == 1) {
+                                    trail->push(other);
+                                    other->assignValue(other->getDomain().getValues()[0]);
+                                    worklist.push_back(other);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     return true;
 }
-
 
 // =====================================================================
 // Variable Selectors
@@ -495,9 +465,42 @@ vector<Variable*> BTSolver::MRVwithTieBreaker ( void )
  * Completing the three tourn heuristic will automatically enter
  * your program into a tournament.
  */
-Variable *BTSolver::getTournVar(void)
+Variable* BTSolver::getTournVar(void)
 {
-    return MRVwithTieBreaker()[0];
+    // Build neighbor cache once
+    unordered_map<Variable*, vector<Variable*>> neighborCache;
+    for (Variable* v : network.getVariables())
+        neighborCache[v] = network.getNeighborsOfVariable(v);
+
+    Variable* best = nullptr;
+    int best_domain = INT_MAX;
+    int best_degree = -1;
+
+    for (Variable* v : network.getVariables())
+    {
+        if (v->isAssigned())
+            continue;
+
+        int d = v->getDomain().size();
+
+        // Prune early: can't beat current best on domain
+        if (d > best_domain)
+            continue;
+
+        int deg = 0;
+        for (Variable* n : neighborCache[v])
+            if (!n->isAssigned())
+                deg++;
+
+        if (d < best_domain || (d == best_domain && deg > best_degree))
+        {
+            best_domain = d;
+            best_degree = deg;
+            best = v;
+        }
+    }
+
+    return best;
 }
 
 // =====================================================================
@@ -558,10 +561,23 @@ vector<int> BTSolver::getValuesLCVOrder(Variable *v)
  * Completing the three tourn heuristic will automatically enter
  * your program into a tournament.
  */
-vector<int> BTSolver::getTournVal(Variable *v)
+vector<int> BTSolver::getTournVal(Variable* v)
 {
-	return getValuesLCVOrder(v);
+    // Skip LCV computation if no unassigned neighbors — order irrelevant
+    bool hasUnassignedNeighbor = false;
+    for (Variable* n : network.getNeighborsOfVariable(v))
+    {
+        if (!n->isAssigned())
+        {
+            hasUnassignedNeighbor = true;
+            break;
+        }
+    }
 
+    if (!hasUnassignedNeighbor)
+        return getValuesInOrder(v);
+
+    return getValuesLCVOrder(v);
 }
 
 // =====================================================================
