@@ -431,7 +431,7 @@ Variable *BTSolver::getfirstUnassignedVariable(void)
 Variable *BTSolver::getMRV(void)
 {
 	Variable *out = nullptr;
-	int best = INT_MAX;
+	int best = 2147483642;
 
 	for (Variable *v : network.getVariables())
 	{
@@ -460,7 +460,7 @@ Variable *BTSolver::getMRV(void)
  */
 vector<Variable *> BTSolver::MRVwithTieBreaker(void)
 {
-	int best_domain = INT_MAX;
+	int best_domain = 2147483642;
 	int best_degree = -1;
 	vector<Variable *> result;
 
@@ -518,7 +518,7 @@ Variable* BTSolver::getTournVar(void)
 		neighborCache[v] = network.getNeighborsOfVariable(v);
 
 	Variable *best = nullptr;
-	int best_domain = INT_MAX;
+	int best_domain = 2147483642;
 	int best_degree = -1;
 
 	for (Variable *v : network.getVariables())
@@ -609,17 +609,17 @@ vector<int> BTSolver::getValuesLCVOrder(Variable *v)
 vector<int> BTSolver::getTournVal(Variable *v)
 {
 	// Skip LCV computation if no unassigned neighbors — order irrelevant
-	bool hasUnassignedNeighbor = false;
+	bool unassigned_neighbor = false;
 	for (Variable *n : network.getNeighborsOfVariable(v))
 	{
 		if (!n->isAssigned())
 		{
-			hasUnassignedNeighbor = true;
+			unassigned_neighbor = true;
 			break;
 		}
 	}
 
-	if (!hasUnassignedNeighbor)
+	if (!unassigned_neighbor)
 		return getValuesInOrder(v);
 
 	return getValuesLCVOrder(v);
